@@ -1,6 +1,6 @@
 {
   "name": "@photostructure/heap-trim",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "Return free C heap pages to the operating system from Node.js",
   "homepage": "https://photostructure.github.io/heap-trim/",
   "types": "./dist/index.d.ts",

@@ -14,8 +14,12 @@ Fixed for any bug fixes.
 Security in case of vulnerabilities.
 -->
 
-## [Unreleased (major)]
+## [Unreleased]
+
+## [1.0.0] - 2026-11-07
 
 ### Added
 
 - **`heapTrim()`** returns free heap memory to the operating system on glibc Linux by calling `malloc_trim(0)`. glibc's `free()` shrinks the heap only from its top, so pages freed below a live allocation otherwise stay resident. On musl, macOS, and Windows it does nothing and returns `false`, and the package builds and loads no native code there: macOS's `malloc_zone_pressure_relief()` and Windows' `_heapmin()` released no measurable memory in the same test.
+
+[1.0.0]: https://github.com/photostructure/heap-trim/releases/tag/v1.0.0
