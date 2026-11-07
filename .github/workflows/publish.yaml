@@ -1,0 +1,477 @@
+name: Stage npm Release
+run-name: Stage ${{ github.ref_name }}
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stage-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+  queue: single
+
+jobs:
+  validate:
+    name: Validate signed release tag
+    runs-on: ubuntu-24.04
+    outputs:
+      package_name: ${{ steps.identity.outputs.package_name }}
+      tag_object_sha: ${{ steps.identity.outputs.tag_object_sha }}
+      version: ${{ steps.identity.outputs.version }}
+    steps:
+      - name: Checkout the release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify tag, version, and signatures
+        id: identity
+        env:
+          EXPECTED_PACKAGE_NAME: "@photostructure/heap-trim"
+          EXPECTED_REPOSITORY_URL: git+https://github.com/photostructure/heap-trim.git
+          GH_TOKEN: ${{ github.token }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [[ ! "$REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || \
+            [[ "$GITHUB_REF" != "refs/tags/$REF_NAME" ]]; then
+            echo "::error::This workflow must run at a vMAJOR.MINOR.PATCH tag, not $GITHUB_REF"
+            exit 1
+          fi
+
+          PACKAGE_NAME="$(node -p "require('./package.json').name")"
+          VERSION="$(node -p "require('./package.json').version")"
+          REPOSITORY_URL="$(node -p "require('./package.json').repository.url")"
+          if [[ "$PACKAGE_NAME" != "$EXPECTED_PACKAGE_NAME" || \
+            "$REPOSITORY_URL" != "$EXPECTED_REPOSITORY_URL" ]]; then
+            echo "::error::The tagged package identity does not match this repository"
+            exit 1
+          fi
+          if [[ "$REF_NAME" != "v$VERSION" ]]; then
+            echo "::error::Tag $REF_NAME does not match package version $VERSION"
+            exit 1
+          fi
+
+          REF_OBJECT_TYPE="$(
+            gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$REF_NAME" --jq '.object.type'
+          )"
+          TAG_OBJECT_SHA="$(
+            gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$REF_NAME" --jq '.object.sha'
+          )"
+          if [[ "$REF_OBJECT_TYPE" != tag ]]; then
+            echo "::error::$REF_NAME must be an annotated tag"
+            exit 1
+          fi
+
+          TAG_TARGET_TYPE="$(
+            gh api "repos/$GITHUB_REPOSITORY/git/tags/$TAG_OBJECT_SHA" --jq '.object.type'
+          )"
+          TAG_TARGET_SHA="$(
+            gh api "repos/$GITHUB_REPOSITORY/git/tags/$TAG_OBJECT_SHA" --jq '.object.sha'
+          )"
+          TAG_VERIFIED="$(
+            gh api "repos/$GITHUB_REPOSITORY/git/tags/$TAG_OBJECT_SHA" --jq '.verification.verified'
+          )"
+          COMMIT_VERIFIED="$(
+            gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" --jq '.commit.verification.verified'
+          )"
+
+          if [[ "$TAG_TARGET_TYPE" != commit || "$TAG_TARGET_SHA" != "$GITHUB_SHA" ]]; then
+            echo "::error::Tag $REF_NAME does not point directly to the workflow commit"
+            exit 1
+          fi
+          if [[ "$TAG_VERIFIED" != true || "$COMMIT_VERIFIED" != true ]]; then
+            echo "::error::The release commit and annotated tag must both have verified signatures"
+            exit 1
+          fi
+
+          {
+            echo "package_name=$PACKAGE_NAME"
+            echo "tag_object_sha=$TAG_OBJECT_SHA"
+            echo "version=$VERSION"
+          } >> "$GITHUB_OUTPUT"
+
+  prebuild-linux-glibc:
+    name: Build linux-${{ matrix.arch }}-glibc from the release tag
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout the release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+          package-manager-cache: false
+      - run: npm ci --ignore-scripts
+      - name: Build in Debian 11 for glibc 2.31 compatibility
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: npm run build:linux-glibc
+      - name: Upload the prebuild
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: prebuild-linux-${{ matrix.arch }}-glibc
+          path: prebuilds/
+          if-no-files-found: error
+          retention-days: 1
+      - run: git diff --exit-code
+
+  pack:
+    name: Build and pack the exact release
+    needs:
+      - validate
+      - prebuild-linux-glibc
+    runs-on: ubuntu-24.04
+    env:
+      EXPECTED_PACKAGE_NAME: ${{ needs.validate.outputs.package_name }}
+      EXPECTED_VERSION: ${{ needs.validate.outputs.version }}
+    steps:
+      - name: Checkout the release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the release Node.js toolchain
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+          package-manager-cache: false
+      - name: Verify the release npm version
+        run: test "$(npm --version)" = "11.17.0"
+      - run: npm ci --ignore-scripts
+      - name: Download exact-tag prebuilds
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: prebuild-*
+          path: prebuilds/
+          merge-multiple: true
+      - name: Build JavaScript and declarations
+        run: npm run build:dist
+      - name: Verify package exports
+        run: npm run check:exports
+      - name: Verify the exact prebuild set
+        run: npm run release:verify-prebuilds -- --project-root .
+      - name: Pack and inventory the package
+        run: |
+          npm run release:pack-package -- \
+            --project-root . \
+            --artifact-dir package-artifact \
+            --expected-name "$EXPECTED_PACKAGE_NAME" \
+            --expected-version "$EXPECTED_VERSION"
+      - run: git diff --exit-code
+      - name: Upload the exact package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: npm-package-${{ github.ref_name }}
+          path: package-artifact/
+          if-no-files-found: error
+          retention-days: 1
+
+  verify-package-mac-win:
+    name: Test packed package on Node.js ${{ matrix.node-version }} / ${{ matrix.os }}
+    needs: pack
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15-intel, macos-14, windows-latest, windows-11-arm]
+        node-version: [22, 24, 26]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the package-test toolchain
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+          package-manager-cache: false
+      - name: Verify the package-test npm version
+        run: test "$(npm --version)" = "11.17.0"
+      - run: npm ci --ignore-scripts
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: npm-package-${{ github.ref_name }}
+          path: package-artifact/
+      - name: Install the packed package with the dependency age gate
+        # The exact downloaded release tarball is the subject under test.
+        run: | # zizmor: ignore[adhoc-packages]
+          npm run release:install-package -- \
+            --project-root . \
+            --artifact-dir package-artifact \
+            --install-root package-install
+      - name: Install the target Node.js runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node-version }}
+          package-manager-cache: false
+      - name: Load the packed package
+        run: |
+          npm run release:load-package -- \
+            --project-root . \
+            --install-root package-install
+      - run: git diff --exit-code
+
+  verify-package-ubuntu:
+    name: Test packed package on Node.js ${{ matrix.node-version }} / ${{ matrix.os }} ${{ matrix.arch }}
+    needs: pack
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+        arch: [x64, arm64]
+        node-version: [22, 24, 26]
+    runs-on: ${{ matrix.arch == 'arm64' && format('{0}-arm', matrix.os) || matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the package-test toolchain
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+          package-manager-cache: false
+      - name: Verify the package-test npm version
+        run: test "$(npm --version)" = "11.17.0"
+      - run: npm ci --ignore-scripts
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: npm-package-${{ github.ref_name }}
+          path: package-artifact/
+      - name: Install the packed package with the dependency age gate
+        # The exact downloaded release tarball is the subject under test.
+        run: | # zizmor: ignore[adhoc-packages]
+          npm run release:install-package -- \
+            --project-root . \
+            --artifact-dir package-artifact \
+            --install-root package-install
+      - name: Install the target Node.js runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node-version }}
+          package-manager-cache: false
+      - name: Load the packed package
+        run: |
+          npm run release:load-package -- \
+            --project-root . \
+            --install-root package-install
+      - run: git diff --exit-code
+
+  verify-package-alpine:
+    name: Test packed package on Node.js ${{ matrix.node-version }} / Alpine ${{ matrix.arch }}
+    needs: pack
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+        node-version: [22, 24, 26]
+        include:
+          - arch: x64
+            runner: ubuntu-24.04
+            platform: linux/amd64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: npm-package-${{ github.ref_name }}
+          path: package-artifact/
+      - name: Install the packed package with the dependency age gate
+        env:
+          DOCKER_PLATFORM: ${{ matrix.platform }}
+        run: |
+          docker run --rm \
+            -v "$PWD:/tmp/project" \
+            --entrypoint /bin/sh \
+            --platform "$DOCKER_PLATFORM" \
+            node:24.19.0-alpine \
+            -c 'test "$(npm --version)" = "11.17.0" && cd /tmp/project && npm ci --ignore-scripts && npm run release:install-package -- --project-root . --artifact-dir package-artifact --install-root package-install'
+      - name: Load the packed package on the target Node.js runtime
+        env:
+          DOCKER_PLATFORM: ${{ matrix.platform }}
+          NODE_VERSION: ${{ matrix.node-version }}
+        run: |
+          docker run --rm \
+            -v "$PWD:/tmp/project" \
+            --entrypoint /bin/sh \
+            --platform "$DOCKER_PLATFORM" \
+            "node:${NODE_VERSION}-alpine" \
+            -c 'cd /tmp/project && npm run release:load-package -- --project-root . --install-root package-install'
+      - run: git diff --exit-code
+
+  stage:
+    name: Stage package on npm
+    needs:
+      - validate
+      - pack
+      - verify-package-mac-win
+      - verify-package-ubuntu
+      - verify-package-alpine
+    runs-on: ubuntu-24.04
+    env:
+      EXPECTED_PACKAGE_NAME: ${{ needs.validate.outputs.package_name }}
+      EXPECTED_TAG_OBJECT_SHA: ${{ needs.validate.outputs.tag_object_sha }}
+      EXPECTED_VERSION: ${{ needs.validate.outputs.version }}
+    permissions:
+      contents: read
+      id-token: write # Authenticate npm Trusted Publishing with OIDC.
+    steps:
+      - name: Download the exact package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: npm-package-${{ github.ref_name }}
+          path: package-artifact/
+      - name: Install the release Node.js toolchain
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+          package-manager-cache: false
+          registry-url: https://registry.npmjs.org
+      - name: Verify the release npm version
+        run: test "$(npm --version)" = "11.17.0"
+      - name: Stage the npm package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          PACK_FILENAME="$(node -e '
+            const { readFileSync, readdirSync } = require("node:fs")
+            const tarballs = readdirSync("package-artifact")
+              .filter((file) => file.endsWith(".tgz"))
+            if (tarballs.length !== 1) {
+              throw new Error("Expected exactly one package tarball, found " + tarballs.length)
+            }
+            const entries = JSON.parse(readFileSync("package-artifact/PACK.json", "utf8"))
+            if (entries.length !== 1) throw new Error("Expected one pack record, found " + entries.length)
+            const entry = entries[0]
+            if (entry.name !== process.env.EXPECTED_PACKAGE_NAME ||
+                entry.version !== process.env.EXPECTED_VERSION) {
+              throw new Error("Unexpected pack identity: " + entry.name + "@" + entry.version)
+            }
+            if (entry.filename !== tarballs[0]) {
+              throw new Error("Pack record does not identify the only tarball")
+            }
+            process.stdout.write(entry.filename)
+          ')"
+          TARBALL="package-artifact/$PACK_FILENAME"
+
+          MANIFEST_PATH="$RUNNER_TEMP/packed-package.json"
+          tar -xOf "$TARBALL" package/package.json > "$MANIFEST_PATH"
+          MANIFEST_PATH="$MANIFEST_PATH" node -e '
+            const { readFileSync } = require("node:fs")
+            const pkg = JSON.parse(readFileSync(process.env.MANIFEST_PATH, "utf8"))
+            if (pkg.name !== process.env.EXPECTED_PACKAGE_NAME ||
+                pkg.version !== process.env.EXPECTED_VERSION) {
+              throw new Error("Unexpected packed manifest: " + pkg.name + "@" + pkg.version)
+            }
+          '
+
+          REF_OBJECT_TYPE="$(
+            gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$REF_NAME" --jq '.object.type'
+          )"
+          TAG_OBJECT_SHA="$(
+            gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$REF_NAME" --jq '.object.sha'
+          )"
+          TAG_TARGET_TYPE="$(
+            gh api "repos/$GITHUB_REPOSITORY/git/tags/$TAG_OBJECT_SHA" --jq '.object.type'
+          )"
+          TAG_TARGET_SHA="$(
+            gh api "repos/$GITHUB_REPOSITORY/git/tags/$TAG_OBJECT_SHA" --jq '.object.sha'
+          )"
+          TAG_VERIFIED="$(
+            gh api "repos/$GITHUB_REPOSITORY/git/tags/$TAG_OBJECT_SHA" --jq '.verification.verified'
+          )"
+          COMMIT_VERIFIED="$(
+            gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" --jq '.commit.verification.verified'
+          )"
+          if [[ "$REF_OBJECT_TYPE" != tag || \
+            "$TAG_OBJECT_SHA" != "$EXPECTED_TAG_OBJECT_SHA" || \
+            "$TAG_TARGET_TYPE" != commit || "$TAG_TARGET_SHA" != "$GITHUB_SHA" || \
+            "$TAG_VERIFIED" != true || "$COMMIT_VERIFIED" != true ]]; then
+            echo "::error::Tag $REF_NAME moved or lost its verified release identity"
+            exit 1
+          fi
+
+          npm stage publish "./$TARBALL" --ignore-scripts
+
+  github-release:
+    name: Create immutable GitHub release
+    needs:
+      - validate
+      - stage
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write # Create the immutable release for the signed tag.
+    steps:
+      # Create the release only once npm serves the version, so the watcher
+      # email announces an installable package.
+      - name: Wait for the npm stage approval
+        uses: photostructure/changelog-release-action@efbfab9798f52b3e1538ab1f1d3b73b261b73885 # v0.1.0
+        with:
+          command: wait-for-npm
+          tag: ${{ github.ref_name }}
+
+      - name: Extract the release notes from CHANGELOG.md
+        id: notes
+        uses: photostructure/changelog-release-action@efbfab9798f52b3e1538ab1f1d3b73b261b73885 # v0.1.0
+        with:
+          command: notes
+          tag: ${{ github.ref_name }}
+
+      # Check the tag after the wait: it can move while the job waits.
+      - name: Create GitHub release
+        env:
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.validate.outputs.tag_object_sha }}
+          GH_TOKEN: ${{ github.token }}
+          NOTES: ${{ steps.notes.outputs.notes-file }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          REF_OBJECT_TYPE="$(
+            gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq '.object.type'
+          )"
+          TAG_OBJECT_SHA="$(
+            gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq '.object.sha'
+          )"
+          TAG_TARGET_TYPE="$(
+            gh api "repos/$GITHUB_REPOSITORY/git/tags/$TAG_OBJECT_SHA" --jq '.object.type'
+          )"
+          TAG_TARGET_SHA="$(
+            gh api "repos/$GITHUB_REPOSITORY/git/tags/$TAG_OBJECT_SHA" --jq '.object.sha'
+          )"
+          TAG_VERIFIED="$(
+            gh api "repos/$GITHUB_REPOSITORY/git/tags/$TAG_OBJECT_SHA" --jq '.verification.verified'
+          )"
+          COMMIT_VERIFIED="$(
+            gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" --jq '.commit.verification.verified'
+          )"
+          if [[ "$REF_OBJECT_TYPE" != tag || "$TAG_TARGET_TYPE" != commit || \
+            "$TAG_OBJECT_SHA" != "$EXPECTED_TAG_OBJECT_SHA" || \
+            "$TAG_TARGET_SHA" != "$GITHUB_SHA" || "$TAG_VERIFIED" != true || \
+            "$COMMIT_VERIFIED" != true ]]; then
+            echo "::error::Tag $TAG moved or lost its verified release identity"
+            exit 1
+          fi
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --notes-file "$NOTES" \
+            --generate-notes

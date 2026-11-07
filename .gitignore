@@ -1,0 +1,53 @@
+# Logs
+logs
+*.log
+
+# 20241120: we *do* want to commit the lockfiles. See https://github.com/nodejs/package-maintenance/blob/main/docs/dependency-management-guidelines.md#using-lockfiles
+# yarn.lock
+# package-lock.json
+
+# Dependency directories
+node_modules/
+
+# Build output
+build/
+lib/
+dist/
+coverage/
+prebuilds/
+*.tsbuildinfo
+
+# Release staging: scripts/release-package-cli.ts and the prebuild artifact CLI
+package-artifact/
+package-install/
+prebuild-artifact/
+prebuild-manifests/
+release-input/
+
+# node-pre-gyp generated files
+build/
+compiled/
+stage/
+*.node
+
+# Dynamically created by Bear and fed to clang-tidy:
+compile_commands*.json
+
+# temporary files from tools
+.idea/
+*.swp
+*.swo
+.dccache
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary files from testing
+asan-output.log
+asan-out.txt

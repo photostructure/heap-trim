@@ -1,0 +1,80 @@
+import pluginJs from "@eslint/js";
+import regexp_plugin from "eslint-plugin-regexp";
+import security from "eslint-plugin-security";
+import globals from "globals";
+import ts_eslint from "typescript-eslint";
+
+/** @type {import('eslint').Linter.Config[]} */
+export default [
+  {
+    files: ["src/**/*.ts", "scripts/*.js", "scripts/*.mjs", "scripts/*.ts"],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+      },
+    },
+  },
+  {
+    ignores: [
+      "build",
+      "coverage",
+      "dist",
+      "docs",
+      // Agent worktrees are full checkouts of this repo, each with its own
+      // tsconfig.json. Linting into them makes typescript-eslint see several
+      // candidate TSConfigRootDirs and fail to parse ANY file, including this
+      // checkout's own sources.
+      ".claude",
+      "*.cts",
+      "*.cjs",
+      "**/*.cjs",
+    ],
+  },
+  pluginJs.configs.recommended,
+  ...ts_eslint.configs.recommended,
+  ...ts_eslint.configs.strict,
+  regexp_plugin.configs["flat/recommended"],
+  {
+    plugins: {
+      security,
+    },
+    rules: {
+      "@typescript-eslint/no-shadow": "error",
+      // Disabled: flags every computed member access, including numeric
+      // array/string indexing (loop counters, char scanning), which this
+      // codebase uses heavily. It's meant for attacker-controlled string keys.
+      "security/detect-object-injection": "off",
+      "security/detect-non-literal-require": "warn",
+      "security/detect-eval-with-expression": "error",
+      "security/detect-non-literal-regexp": "warn",
+      "security/detect-unsafe-regex": "error",
+      "security/detect-buffer-noassert": "error",
+      "security/detect-child-process": "warn",
+      "security/detect-disable-mustache-escape": "error",
+      "security/detect-no-csrf-before-method-override": "error",
+      "security/detect-possible-timing-attacks": "warn",
+      "security/detect-pseudoRandomBytes": "error",
+    },
+  },
+  {
+    files: ["scripts/*.ts", "scripts/*.*js"],
+    rules: {
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        {
+          argsIgnorePattern: "^_",
+          caughtErrors: "none",
+        },
+      ],
+      "@typescript-eslint/no-require-imports": "off",
+      "@typescript-eslint/no-explicit-any": "off",
+      "no-console": "off",
+    },
+  },
+  {
+    files: ["**/*.test.ts", "**/*.test.js", "**/*.test.mjs"],
+    rules: {
+      "@typescript-eslint/no-non-null-assertion": "off",
+    },
+  },
+];

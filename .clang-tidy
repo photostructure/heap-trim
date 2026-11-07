@@ -1,0 +1,40 @@
+---
+Checks: >
+  -*,
+  bugprone-*,
+  clang-analyzer-*,
+  clang-diagnostic-format,
+  performance-*,
+  misc-unused-parameters,
+  modernize-use-nullptr,
+  cppcoreguidelines-special-member-functions,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-exception-escape,
+  -bugprone-casting-through-void,
+  -bugprone-assignment-in-if-condition,
+  -clang-analyzer-valist.Uninitialized
+
+# Findings in these checks FAIL the lint job instead of merely printing. They are
+# fs-metadata's ownership and lifetime checks, kept as they are there.
+WarningsAsErrors: >
+  bugprone-use-after-move,
+  bugprone-unused-raii,
+  bugprone-dangling-handle,
+  clang-analyzer-cplusplus.NewDeleteLeaks,
+  clang-analyzer-core.NullDereference,
+  cppcoreguidelines-special-member-functions
+
+# Analyze headers in src/'s platform directories, and no others. The addon has
+# no headers yet, so this matches nothing; it is fs-metadata's filter, kept so
+# a header added under src/common, src/darwin, src/linux or src/windows is
+# analyzed. A plain '.*/src/.*' would match every path when the checkout lives
+# under a directory named `src` (e.g. ~/src/heap-trim), pulling in
+# node_modules/node-addon-api. Accepts both POSIX and Windows separators.
+HeaderFilterRegex: '.*[\\/]src[\\/](common|darwin|linux|windows)[\\/].*'
+FormatStyle: none
+SystemHeaders: false
+CheckOptions:
+  - key: performance-move-const-arg.CheckTriviallyCopyableMove
+    value: false
+  - key: cppcoreguidelines-special-member-functions.AllowSoleDefaultDtor
+    value: true

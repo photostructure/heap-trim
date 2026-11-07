@@ -1,0 +1,141 @@
+{
+  "name": "@photostructure/heap-trim",
+  "version": "0.0.0",
+  "description": "Return free C heap pages to the operating system from Node.js",
+  "homepage": "https://photostructure.github.io/heap-trim/",
+  "types": "./dist/index.d.ts",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.mjs",
+  "exports": {
+    ".": {
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      },
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "CHANGELOG.md",
+    "LICENSE.txt",
+    "README.md",
+    "binding.gyp",
+    "dist/",
+    "prebuilds/",
+    "scripts/install.cjs",
+    "src/**/*.cpp",
+    "src/**/*.h",
+    "!src/test-utils/**"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/photostructure/heap-trim.git"
+  },
+  "license": "MIT",
+  "scripts": {
+    "install": "node scripts/install.cjs",
+    "clean": "run-p clean:*",
+    "clean:dist": "del-cli coverage dist docs \"*.tsbuildinfo\"",
+    "clean:gyp-cache": "del-cli --force build %USERPROFILE%/.node-gyp ~/.node-gyp",
+    "clean:native": "node-gyp clean",
+    "node-gyp-rebuild": "node-gyp rebuild",
+    "build": "run-s build:native build:dist",
+    "build:native": "tsx scripts/prebuildify-wrapper.ts",
+    "build:linux-glibc": "bash scripts/prebuild-linux-glibc.sh",
+    "build:dist": "tsup && node scripts/post-build.mjs",
+    "docs": "typedoc",
+    "// test": "support `npm t name_of_file` (and don't fail due to missing coverage)",
+    "test": "npm run test:cjs -- --no-coverage",
+    "tests": "run-s test:*",
+    "test:cjs": "cross-env TEST_ESM=0 jest",
+    "test:esm": "cross-env TEST_ESM=1 node --experimental-vm-modules --no-warnings node_modules/jest/bin/jest.js",
+    "check:memory": "tsx scripts/check-memory.ts",
+    "lint": "run-s lint:*",
+    "lint:native": "tsx scripts/clang-tidy.ts",
+    "lint:tsc": "tsc --noEmit",
+    "lint:eslint": "eslint",
+    "// check:exports": "verify package.json exports + type declarations resolve correctly (arethetypeswrong). Requires `npm run build:dist` first.",
+    "check:exports": "attw --pack .",
+    "fmt": "run-p fmt:*",
+    "// fmt:cpp": "on ubuntu: `sudo apt install clang-format`. Note that windows emits `invalid format` with this || true approach, but it works and is better than introducing Yet Another Script Script (like scripts/clang-format.mjs).",
+    "fmt:cpp": "clang-format --style=LLVM -i src/*.cpp || echo \"problem with clang-format\"",
+    "fmt:js": "prettier --write \"**/*.{cjs,mjs,js}\"",
+    "fmt:ts": "prettier --write \"**/*.{cts,mts,ts}\"",
+    "fmt:md": "prettier --write \"**/*.md\"",
+    "fmt:json": "prettier --write \"**/*.json\"",
+    "fmt:yml": "prettier --write \"**/*.{yaml,yml}\"",
+    "fmt:pkg": "npm pkg fix",
+    "update": "run-p update:*",
+    "update:deps": "ncu -u",
+    "install:pinact": "go install github.com/suzuki-shunsuke/pinact/v4/cmd/pinact@v4.1.0",
+    "update:actions": "pinact run -u || echo \"problem with pinact\"",
+    "release:verify-prebuilds": "tsx scripts/release-prebuild-artifacts-cli.ts verify",
+    "release:pack-package": "tsx scripts/release-package-cli.ts pack",
+    "release:install-package": "tsx scripts/release-package-cli.ts install",
+    "release:load-package": "tsx scripts/release-package-cli.ts load",
+    "// preflight": "should be manually run by developers before they run `git commit`",
+    "preflight": "tsx scripts/preflight.ts",
+    "prepare-release": "npm run build:dist"
+  },
+  "gypfile": true,
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "keywords": [
+    "malloc",
+    "malloc_trim",
+    "memory",
+    "rss",
+    "native",
+    "node-addon",
+    "linux",
+    "macos",
+    "windows"
+  ],
+  "dependencies": {
+    "node-addon-api": "8.9.2",
+    "node-gyp-build": "^4.8.4"
+  },
+  "devDependencies": {
+    "@arethetypeswrong/cli": "0.18.5",
+    "@eslint/js": "^10.0.1",
+    "@types/jest": "^30.0.0",
+    "@types/node": "26.6.2",
+    "cross-env": "^10.1.0",
+    "del-cli": "^7.0.0",
+    "eslint": "10.11.0",
+    "eslint-plugin-regexp": "3.3.0",
+    "eslint-plugin-security": "4.0.1",
+    "globals": "17.12.0",
+    "jest": "30.4.2",
+    "jest-environment-node": "30.4.1",
+    "node-gyp": "13.0.2",
+    "npm-check-updates": "23.1.0",
+    "npm-run-all2": "9.0.3",
+    "prebuildify": "^6.0.1",
+    "prettier": "3.9.8",
+    "prettier-plugin-organize-imports": "4.3.0",
+    "ts-jest": "29.4.12",
+    "tsup": "^8.5.1",
+    "tsx": "4.23.13",
+    "typedoc": "0.28.20",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.70.0"
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "entryPoints": ["src/index.ts"],
+  "out": "build/docs",
+  "name": "@photostructure/heap-trim",
+  "includeVersion": false,
+  "excludePrivate": true,
+  "excludeInternal": true,
+  "readme": "README.md",
+  "githubPages": true,
+  "exclude": ["**/*.test.ts", "**/*.spec.ts", "**/test/**"],
+  "tsconfig": "tsconfig.base.json",
+  "projectDocuments": ["SECURITY.md", "LICENSE.txt"],
+  "navigationLinks": {
+    "GitHub": "https://github.com/photostructure/heap-trim",
+    "NPM": "https://www.npmjs.com/package/@photostructure/heap-trim"
+  },
+  "highlightLanguages": [
+    "typescript",
+    "javascript",
+    "c++",
+    "cpp",
+    "c",
+    "docker",
+    "dockerfile",
+    "json",
+    "bash",
+    "shell",
+    "powershell",
+    "yaml"
+  ]
+}
